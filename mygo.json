@@ -1,0 +1,11 @@
+{
+  "name": "DeepDizhu",
+  "identifier": "dev.deepdizhu.app",
+  "version": "0.1.0",
+  "copyright": "© 2026 DeepDizhu",
+  "out": "build",
+  "linux": {
+    "comment": "四人斗地主，与三位可调难度的电脑玩家对局",
+    "categories": ["Game", "CardGame"]
+  }
+}

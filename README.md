@@ -26,6 +26,29 @@ mkdir -p /tmp/ddz && SMOKE_SHOTS=/tmp/ddz go run -tags smoke .
 
 重新生成应用图标：`go run ./tools/icon`。
 
+## 发布
+
+把 `mygo.json` 的 `version` 改成新版本并提交，再推送同名标签：
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+GitHub Actions（`.github/workflows/release.yml`）随即跑测试，并行打出各平台安装包，全部成功后建立 Release `v0.2.0` 并附上安装包（GitHub 会把文件名里的空格显示为点）：
+
+| 平台 | 安装包 |
+| --- | --- |
+| macOS（Apple 芯片与 Intel 通用） | `DeepDizhu 0.2.0.dmg` |
+| Windows x64 / ARM64 | `DeepDizhu Setup 0.2.0 amd64.exe`、`… arm64.exe` |
+| Linux x64 / ARM64 | `deepdizhu_0.2.0_amd64.deb`、`…_arm64.deb`；`deepdizhu-0.2.0-linux-amd64.tar.gz`、`…-linux-arm64.tar.gz` 与 `install.sh` |
+
+- 标签与 `version` 不一致时，工作流在测试前就失败，不会发布。
+- 带 `-` 的标签（如 `v0.2.0-beta.1`）发布为预发布版本。
+- 若已在网页上建好这个标签的 Release，工作流只把安装包补传上去。
+- 想先试打包而不发布：在 Actions 页面对 Release 工作流点「Run workflow」，安装包留在该次运行的 Artifacts 里。
+- 安装包未做 Apple 公证与 Windows 代码签名，首次打开时系统会拦下或提示风险。
+
 ## 玩法
 
 - 两副牌 108 张，每人 25 张，留 8 张底牌。

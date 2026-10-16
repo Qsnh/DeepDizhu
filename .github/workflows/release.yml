@@ -1,0 +1,114 @@
+# 推送 v* 标签（如 v0.2.0）时：跑测试，在各平台打出安装包，发布到同名的
+# GitHub Release。标签须与 mygo.json 的 version 一致。也可在 Actions 页面手动
+# 运行，只打包不发布，安装包留在该次运行的 Artifacts 里。
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # 创建 Release 并上传安装包
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the version
+        if: github.ref_type == 'tag'
+        run: |
+          version="$(jq -r .version mygo.json)"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error file=mygo.json::标签 $GITHUB_REF_NAME 与 mygo.json 的版本 $version 不一致：先改 version、提交，再打标签 v<version>"
+            exit 1
+          fi
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+        env:
+          CGO_ENABLED: "0"
+
+  build:
+    needs: test
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # dmg 要在 macOS 上做；MyGo 不需要 cgo，Windows 与 Linux 都在 Ubuntu 上交叉编译。
+          - { name: macOS, os: macos-latest, platform: darwin/universal }
+          - { name: Windows, os: ubuntu-latest, platform: "windows/amd64,windows/arm64" }
+          - { name: Linux, os: ubuntu-latest, platform: "linux/amd64,linux/arm64" }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Install NSIS, for the Windows installers
+        if: matrix.name == 'Windows'
+        run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: Build
+        run: go tool mygo build -platform "${{ matrix.platform }}"
+      # 只取要发布的文件，与 mygo build -upload 所传的相同：dmg、Windows 安装程序、
+      # deb、tar.gz，以及各 Linux 目标共用的 install.sh。
+      - name: Collect the installers
+        run: |
+          mkdir dist
+          find build -mindepth 2 -maxdepth 2 -type f \( -name '*.dmg' -o -name '* Setup *.exe' \
+            -o -name '*.deb' -o -name '*.tar.gz' -o -name install.sh \) -exec cp {} dist/ \;
+          ls -l dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.name }}
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    name: Publish the release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ls -l dist
+          # 已在网页上建好的 Release（含草稿）只补传安装包，不改它的说明与状态。
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            exit 0
+          fi
+          # GitHub 会把文件名里的空格换成点，这里只按后缀说明。
+          cat > "$RUNNER_TEMP/notes.md" << 'EOF'
+          ## 下载
+
+          | 系统 | 安装包 |
+          | --- | --- |
+          | macOS（Apple 芯片与 Intel 通用） | `.dmg` |
+          | Windows x64 / ARM64 | 名字含 `Setup`、以 `amd64.exe` / `arm64.exe` 结尾 |
+          | Debian、Ubuntu x64 / ARM64 | `_amd64.deb` / `_arm64.deb` |
+          | 其他 Linux x64 / ARM64 | `linux-amd64.tar.gz` / `linux-arm64.tar.gz`，与 `install.sh` 放在同一目录后运行 `sh install.sh`，装到当前用户 |
+
+          安装包没有经过 Apple 公证与 Windows 代码签名：macOS 首次打开被拦下时，到「系统设置 → 隐私与安全性」点「仍要打开」；Windows 出现 SmartScreen 提示时点「更多信息 → 仍要运行」。
+
+          EOF
+          prerelease=""
+          case "$TAG" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$TAG" dist/* --verify-tag --title "DeepDizhu $TAG" \
+            --notes-file "$RUNNER_TEMP/notes.md" --generate-notes $prerelease
